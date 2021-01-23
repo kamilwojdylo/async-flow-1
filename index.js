@@ -5,7 +5,7 @@ import mkdirp from 'mkdirp';
 import fs from 'fs';
 import cheerio from 'cheerio';
 
-const concurrency = 4;
+const concurrency = 2;
 let running = 1;
 //let completed = 0;
 let globalNumberOfLinks = 0;
@@ -28,8 +28,10 @@ function spider(link, nesting, spiderCb) {
   }
 
   if (nesting < 0) {
-    console.log('too deep exit');
-    return spiderCb && spiderCb();
+    //console.log('too deep exit');
+    return process.nextTick(spiderCb);
+    // dlaczego powrót synchroniczny nie wywołuje ostatniego callback'a
+    //return spiderCb && spiderCb();
   }
 
   /* Nazwy i ścieżki do zpaisania plików */
@@ -52,7 +54,6 @@ function spider(link, nesting, spiderCb) {
 
   function downloadingFinishedCb(body) {
     const pathToStore = path.join(pageName, storeDir, storeFileName);
-    //console.log({ pathToStore });
     fs.writeFileSync(pathToStore, body);
     const linksInResponse = findOtherLinks(myURL, body);
     const linksCount = linksInResponse.length;
@@ -62,40 +63,33 @@ function spider(link, nesting, spiderCb) {
       return spiderCb && spiderCb();
     }
     */
-    //console.log(`links count ${linksCount}`);
     linksInResponse.LINK = link;
     if (linksCount > 0) {
       running--;
-      next(linksInResponse, 0, 0, nesting);
+      next(linksInResponse, {idx: 0, completed: 0}, nesting);
     } else {
       spiderCb();
     }
   }
 
-  function next(nestedLinks, idx, completed, nesting) {
-    //console.log(`downloadedLink = ${nestedLinks.LINK}, idx = ${idx}, completed = ${completed}, running = ${running}`)
-    while (running < concurrency && idx < nestedLinks.length) {
-      const nextLink = nestedLinks[idx++];
+  function next(nestedLinks, progress, nesting) {
+    while (running < concurrency && progress.idx < nestedLinks.length) {
+      const nextLink = nestedLinks[progress.idx++];
       if (nextLink.endsWith('second/1/third/2') || nextLink.endsWith('second/2/third/2')) {
         debugger;
       }
 
       function spideringFromNextFinished() {
-        //console.log(`nextCb running ${running}`)
-        if (++completed === nestedLinks.length) {
-          //console.log(`completed = ${nestedLinks.LINK}`);
+        if (++progress.completed === nestedLinks.length) {
           return spiderCb && spiderCb();
         }
         running--;
-        console.log(idx, nesting);
-        next(nestedLinks, idx, completed, nesting);
+        next(nestedLinks, progress, nesting);
       }
-      const bindedFn = spideringFromNextFinished.bind({idx});
       spider(
         nextLink,
         nesting - 1,
-        bindedFn
-        //spideringFromNextFinished
+        spideringFromNextFinished
       );
       running++;
     }
@@ -108,12 +102,11 @@ const finalCb = () => {
   console.log('Operation finished.');
   console.log(stats);
 };
-spider(base, 2, finalCb);
+spider(base, 1, finalCb);
 
 function findOtherLinks(baseUrl, body) {
   const $ = cheerio.load(body);
   const a = $('a');
-  //console.log(a);
   let links = Array(a.length);
   for (let i = 0; i < a.length; i += 1) {
     links[i] = a[i].attribs.href;
