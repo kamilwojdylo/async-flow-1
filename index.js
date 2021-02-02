@@ -1,129 +1,43 @@
-import got from 'got';
-import url from 'url';
-import path from 'path';
-import mkdirp from 'mkdirp';
-import fs from 'fs';
-import cheerio from 'cheerio';
+import { TaskQueue } from './taskQueue.js';
+import {
+  downloadFile,
+  findOtherLinks,
+  makePathsToStore,
+  createDirs,
+  updateStats,
+  stats,
+  storeFileContent,
+} from './utils.js';
 
-const concurrency = 2;
-let running = 1;
-//let completed = 0;
-let globalNumberOfLinks = 0;
-let nextCount = 0;
-
-const stats = {
-  third: 0,
-  second: 0,
-  first: 0,
-  pases: 0
-};
-function spider(link, nesting, spiderCb) {
-  stats.pases += 1;
-  if (link.includes('third/')) {
-    stats.third += 1;
-  } else if (link.includes('second/')) {
-    stats.second += 1;
-  } else {
-    stats.first += 1;
-  }
-
-  if (nesting < 0) {
-    //console.log('too deep exit');
-    return process.nextTick(spiderCb);
-    // dlaczego powrót synchroniczny nie wywołuje ostatniego callback'a
-    //return spiderCb && spiderCb();
-  }
-
-  /* Nazwy i ścieżki do zpaisania plików */
-  const myURL = new url.URL(link);
-  const storeFileName = 'index.html';
-  const pageName = myURL.hostname;
-  const storeDir = myURL.pathname;
-
-  try {
-    const pathToCreate = path.join(pageName, storeDir);
-    mkdirp.sync(pathToCreate);
-  } catch(err) {}
+function spider(link, nesting, spiderCb, queue) {
+  updateStats(link);
 
   /* ściąganie pliku */
-  (async function downloadAFile() {
-    const response = await got(link);
-    console.log(link);
-    downloadingFinishedCb(response.body, link);
-  })();
+  downloadFile(link, downloadingFinishedCb);
 
   function downloadingFinishedCb(body) {
-    const pathToStore = path.join(pageName, storeDir, storeFileName);
-    fs.writeFileSync(pathToStore, body);
-    const linksInResponse = findOtherLinks(myURL, body);
+    storeFileContent(link, body);
+    const linksInResponse = findOtherLinks(link, body);
     const linksCount = linksInResponse.length;
 
-    /*
-    if (linksInResponse.length === 0) {
-      return spiderCb && spiderCb();
+    if (linksCount > 0 && nesting > 0) {
+      linksInResponse.forEach(link => {
+        queue.pushTask((done) => {
+          spider(link, nesting - 1, done, queue);
+        });
+      });
     }
-    */
-    linksInResponse.LINK = link;
-    if (linksCount > 0) {
-      running--;
-      next(linksInResponse, {idx: 0, completed: 0}, nesting);
-    } else {
-      spiderCb();
-    }
+    spiderCb();
   }
-
-  function next(nestedLinks, progress, nesting) {
-    while (running < concurrency && progress.idx < nestedLinks.length) {
-      const nextLink = nestedLinks[progress.idx++];
-      if (nextLink.endsWith('second/1/third/2') || nextLink.endsWith('second/2/third/2')) {
-        debugger;
-      }
-
-      function spideringFromNextFinished() {
-        if (++progress.completed === nestedLinks.length) {
-          return spiderCb && spiderCb();
-        }
-        running--;
-        next(nestedLinks, progress, nesting);
-      }
-      spider(
-        nextLink,
-        nesting - 1,
-        spideringFromNextFinished
-      );
-      running++;
-    }
-    nextCount++;
-  }
-
 }
 const base = 'http://localhost:8080';
 const finalCb = () => {
   console.log('Operation finished.');
   console.log(stats);
 };
-spider(base, 1, finalCb);
-
-function findOtherLinks(baseUrl, body) {
-  const $ = cheerio.load(body);
-  const a = $('a');
-  let links = Array(a.length);
-  for (let i = 0; i < a.length; i += 1) {
-    links[i] = a[i].attribs.href;
-  }
-  links = links
-    .map(link => {
-      const linkUrl = url.parse(link);
-      if (linkUrl.hostname === null) {
-        //link = link.substr(1);
-        return `${baseUrl.href}${link}`;
-      }
-      if (linkUrl.hostname !== baseUrl.hostname) {
-        return null;
-      }
-      return link;
-    })
-    .filter(link => link !== null)
-  ;
-  return links;
-}
+const queue = new TaskQueue(2);
+queue.on('error', console.error);
+queue.on('empty', finalCb);
+queue.pushTask((done) => {
+  spider(base, 2, done, queue);
+});

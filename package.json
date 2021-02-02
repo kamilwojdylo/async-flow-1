@@ -6,7 +6,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "server": "node testServer.js",
+    "debug": "node --inspect-brk index.js",
+    "server": "nodemon testServer.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -15,5 +16,8 @@
     "cheerio": "^1.0.0-rc.5",
     "got": "^11.8.1",
     "mkdirp": "^1.0.4"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.7"
   }
 }
